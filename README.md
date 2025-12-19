@@ -26,15 +26,20 @@ clip_id = ds.clip_index.index[0] # First clip in the dataset
 
 
 ## Camera Data
-If you want to cache the data locally then run the following command, otherwise skip it
+If you want to cache the data locally you can download via chunk or via clip_id:
 
 ```python
+### VIA CHUNK
 chunk_id = ds.get_clip_chunk(clip_id)
 
 ds.download_chunk_features(
     int(chunk_id),
     features=ds.features.CAMERA.ALL
 )
+
+### VIA CLIP_ID
+ds.download_clip_features(clip_id, ["camera_front_wide_120fov", "camera_cross_left_120fov", "camera_cross_right_120fov"])
+
 
 # instead of .ALL you can choose a specific camera on the vehicle:
 
@@ -55,28 +60,40 @@ frame_indices = np.array([0, 1, 2]) # get first 3 frames
 frames = reader.decode_images_from_frame_indices(frame_indices) # (N, H, W, C) numpy array
 ```
 
+
 ## Lidar Data
 ```python
+### VIA CHUNK
 chunk_id = ds.get_clip_chunk(clip_id)
-
 ds.download_chunk_features(
     int(chunk_id),
     features=ds.features.LIDAR.LIDAR_TOP_360FOV
 )
+
+### VIA CLIP_ID
+ds.download_clip_features(clip_id, ["lidar_top_360fov"])
+
+
 
 reader = ds.get_clip_feature(clip_id, "lidar_top_360fov") # dict
 ```
 ## Radar Data
 
 ```python
+### VIA CHUNK
 chunk_id = ds.get_clip_chunk(clip_id)
-
 ds.download_chunk_features(
     int(chunk_id),
     features=ds.features.RADAR.ALL
 )
 
+### VIA CLIP_ID
+ds.download_clip_features(clip_id,["radar_corner_front_left_srr_0"])
+
+
+
 reader = ds.get_clip_feature(clip_id, "radar_corner_front_left_srr_0") # dict
+
 
 # instead of .ALL you can choose a specific radar on the vehicle. See the huggingface repo.
 
@@ -85,12 +102,15 @@ reader = ds.get_clip_feature(clip_id, "radar_corner_front_left_srr_0") # dict
 ## Calibration Data
 
 ```python
+### VIA CHUNK
 chunk_id = ds.get_clip_chunk(clip_id)
-
 ds.download_chunk_features(
     int(chunk_id),
     features=ds.features.CALIBRATION.ALL
 )
+
+### VIA CLIP_ID
+ds.download_clip_features(clip_id, ["sensor_extrinsics"])
 
 reader = ds.get_clip_feature(clip_id, "sensor_extrinsics") # pandas dataframe
 
@@ -106,12 +126,15 @@ The second argument can be one of `sensor_extrinsics`, `camera_extrinsics`, or `
 ## EgoMotion Data
 
 ```python
+### VIA CHUNK
 chunk_id = ds.get_clip_chunk(clip_id)
-
 ds.download_chunk_features(
     int(chunk_id),
     features=ds.features.LABELS.EGOMOTION
 )
+
+### VIA CLIP_ID
+ds.download_clip_features(clip_id,["egomotion"])
 
 reader = ds.get_clip_feature(clip_id, "egomotion")
 
