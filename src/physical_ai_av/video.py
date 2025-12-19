@@ -8,6 +8,8 @@ import logging
 import av
 import numpy as np
 
+from torchcodec.decoders import VideoDecoder
+
 logger = logging.getLogger(__name__)
 
 
@@ -266,3 +268,37 @@ class SeekVideoReader(VideoReader):
             order = {frame_idx: i for i, frame_idx in enumerate(unique_frame_idxs)}
             stacked = stacked[[order[frame_idx] for frame_idx in frame_indices]]
         return stacked
+
+
+class TorchCodecVideoReader(VideoReader):
+
+    def __init__(
+        self,
+        video_data: io.BytesIO,
+        timestamps: np.ndarray | None = None,
+        thread_count: int = 1,
+        device="cpu"):
+
+        super().__init__(video_data=video_data, timestamps=timestamps, thread_count=thread_count)
+
+        self.decoder = VideoDecoder(video_data, dimension_order="NHWC", device=device)
+        self.device = device
+
+    def close(self):
+        """Close the video reader."""
+
+        pass
+
+    def decode_images_from_frame_indices(self, frame_indices: np.ndarray) -> np.ndarray:
+        """Decode images from frame indices.
+
+        Args:
+            frame_indices: Frame indices to decode.
+
+        Returns:
+            image: An array of shape (N, H, W, C) containing the decoded frames.
+        """
+
+        frames = self.decoder.get_frames_at(frame_indices)
+
+        return frames.data.cpu().numpy()

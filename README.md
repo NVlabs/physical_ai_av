@@ -118,3 +118,12 @@ reader = ds.get_clip_feature(clip_id, "egomotion")
 print(reader(0.27)) # get egomotion data at timestamp 0.27
 ```
 
+
+# TorchCodec Support
+Video decoding is an intensive process and is often the bottleneck in deep learning pipelines. TorchCodec offeres gpu accelerated decoders. To use hardware accelerated decoding, please follow the instructions to [install torchcodec](https://github.com/pytorch/torchcodec?tab=readme-ov-file#installing-torchcodec). Once torchcodec is installed, you can use it like so:
+
+```python
+reader = ds.get_clip_feature(clip_id, "camera_front_wide_120fov", use_torch_codec=True)
+```
+
+Note that if a gpu is not found, we fall back to cpu.

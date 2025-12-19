@@ -14,6 +14,21 @@ from physical_ai_av import egomotion, video
 from physical_ai_av.utils import hf_interface
 
 
+try:
+    import torch
+    _TORCH_AVAILABLE = True
+except ImportError:
+    torch = None
+    _TORCH_AVAILABLE = False
+
+if _TORCH_AVAILABLE:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+else:
+    device = None
+
+
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -126,7 +141,7 @@ class PhysicalAIAVDatasetInterface(hf_interface.HfRepoInterface):
                     )
         self.download_files(files_to_download, **kwargs)
 
-    def get_clip_feature(self, clip_id: str, feature: str, maybe_stream: bool = False) -> Any:
+    def get_clip_feature(self, clip_id: str, feature: str, maybe_stream: bool = False, use_torch_codec: bool = False) -> Any:
         chunk_filename = self.features.get_chunk_feature_filename(
             self.get_clip_chunk(clip_id), feature
         )
@@ -144,12 +159,28 @@ class PhysicalAIAVDatasetInterface(hf_interface.HfRepoInterface):
                             egomotion_df
                         ).create_interpolator(egomotion_df["timestamp"].to_numpy())
                     elif feature.startswith("camera"):
-                        return video.SeekVideoReader(
-                            video_data=io.BytesIO(zf.read(clip_files_in_zip["video"])),
-                            timestamps=pd.read_parquet(
+                        video_data = io.BytesIO(zf.read(clip_files_in_zip["video"]))
+                        timestamps = pd.read_parquet(
                                 io.BytesIO(zf.read(clip_files_in_zip["frame_timestamps"]))
-                            )["timestamp"].to_numpy(),
-                        )
+                            )["timestamp"].to_numpy()
+
+                        if use_torch_codec:
+                            if not _TORCH_AVAILABLE:
+                                raise RuntimeError(
+                                    "use_torch_codec=True requires PyTorch to be installed, but torch was not found."
+                                )
+
+                            return video.TorchCodecVideoReader(
+                                video_data=video_data,
+                                timestamps=timestamps,
+                                device=device,
+                            )
+                        else:
+                            return video.SeekVideoReader(
+                                video_data=video_data,
+                                timestamps=timestamps,
+                            )
+
                     else:
                         logger.warning(
                             f"Feature-specific data reader for {feature=} not implemented yet."
