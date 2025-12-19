@@ -120,10 +120,27 @@ print(reader(0.27)) # get egomotion data at timestamp 0.27
 
 
 # TorchCodec Support
-Video decoding is an intensive process and is often the bottleneck in deep learning pipelines. TorchCodec offeres gpu accelerated decoders. To use hardware accelerated decoding, please follow the instructions to [install torchcodec](https://github.com/pytorch/torchcodec?tab=readme-ov-file#installing-torchcodec). Once torchcodec is installed, you can use it like so:
+Video decoding is an intensive process and is often the bottleneck in deep learning pipelines. TorchCodec offeres gpu accelerated decoders. To use hardware accelerated decoding:
+
+## Installation
+Ensure you have `python>=3.12` installed in your environment
+
+1. Install the devkit from source 
+```
+git clone https://github.com/Malav-P/physical_ai_av.git
+cd physical_ai_av
+pip install -e .
+```
+
+2.  follow the instructions to [install torchcodec](https://github.com/pytorch/torchcodec?tab=readme-ov-file#installing-torchcodec).
+  These instructions help install torchcodec, cuda-enabled pytorch, and ffmpeg to your environment.
+
+## Usage
+
+Once the devkit and torchcodec is installed, you can use it like so:
 
 ```python
 reader = ds.get_clip_feature(clip_id, "camera_front_wide_120fov", use_torch_codec=True)
 ```
 
-Note that if a gpu is not found, we fall back to cpu.
+Note that if a gpu is not found, this code will error since the cpu version of torchcodec is not installed.

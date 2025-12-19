@@ -270,35 +270,32 @@ class SeekVideoReader(VideoReader):
         return stacked
 
 
-class TorchCodecVideoReader(VideoReader):
 
+class TorchCodecVideoReader(VideoReader):
     def __init__(
         self,
         video_data: io.BytesIO,
         timestamps: np.ndarray | None = None,
         thread_count: int = 1,
-        device="cpu"):
+        device: str = "cuda",
+    ):
 
-        super().__init__(video_data=video_data, timestamps=timestamps, thread_count=thread_count)
+        super().__init__(
+            video_data=video_data,
+            timestamps=timestamps,
+            thread_count=thread_count,
+        )
 
-        self.decoder = VideoDecoder(video_data, dimension_order="NHWC", device=device)
+        self.decoder = VideoDecoder(
+            video_data,
+            dimension_order="NHWC",
+            device=device,
+        )
         self.device = device
 
     def close(self):
-        """Close the video reader."""
-
         pass
 
     def decode_images_from_frame_indices(self, frame_indices: np.ndarray) -> np.ndarray:
-        """Decode images from frame indices.
-
-        Args:
-            frame_indices: Frame indices to decode.
-
-        Returns:
-            image: An array of shape (N, H, W, C) containing the decoded frames.
-        """
-
         frames = self.decoder.get_frames_at(frame_indices)
-
         return frames.data.cpu().numpy()

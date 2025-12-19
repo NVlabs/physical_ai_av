@@ -13,18 +13,11 @@ import pandas as pd
 from physical_ai_av import egomotion, video
 from physical_ai_av.utils import hf_interface
 
+import importlib.util
 
-try:
-    import torch
-    _TORCH_AVAILABLE = True
-except ImportError:
-    torch = None
-    _TORCH_AVAILABLE = False
+# Fast check for optional dependencies
+_TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
 
-if _TORCH_AVAILABLE:
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-else:
-    device = None
 
 
 
@@ -172,8 +165,7 @@ class PhysicalAIAVDatasetInterface(hf_interface.HfRepoInterface):
 
                             return video.TorchCodecVideoReader(
                                 video_data=video_data,
-                                timestamps=timestamps,
-                                device=device,
+                                timestamps=timestamps
                             )
                         else:
                             return video.SeekVideoReader(
