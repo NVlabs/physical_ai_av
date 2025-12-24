@@ -89,7 +89,7 @@ def load_physical_aiavdataset(
         "camera_front_tele_30fov": 6,
     }
 
-    # Load egomotion data, 前20s（大概）是采样率100HZ，超过20s的采样率在变化，很奇怪，可能只用前20s？
+    # Load egomotion data
     egomotion = avdi.get_clip_feature(
         clip_id,
         avdi.features.LABELS.EGOMOTION,
@@ -136,7 +136,7 @@ def load_physical_aiavdataset(
     t0_rot = spt.Rotation.from_quat(t0_quat)
     t0_rot_inv = t0_rot.inv()
 
-    # Transform history positions to local frame  # t0_rot_inv is world2ego_r, 后边是世界坐标系原点移动到自车位置后的历史坐标点
+    # Transform history positions to local frame  # t0_rot_inv is world2ego_r
     ego_history_xyz_local = t0_rot_inv.apply(ego_history_xyz - t0_xyz)
 
     # Transform future positions to local frame
