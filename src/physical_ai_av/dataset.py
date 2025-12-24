@@ -197,3 +197,186 @@ class Features:
         if not isinstance(templates, dict):
             raise ValueError(f"{feature=} is not chunked as zip files.")
         return {k: v.format(clip_id=clip_id) for k, v in templates.items()}
+
+class OfflinePhysicalAIAVDatasetInterface(hf_interface.OfflineHfRepoInterface):
+    """Fully offline interface for the PhysicalAI-AV dataset.
+
+    See also the parent class `hf_interface.OfflineHfRepoInterface` for additional attributes.
+
+    Attributes:
+        revision (`str`): A Git revision id, which can be a branch name, a tag, or a commit hash
+            (if not supplied at initialization, the latest commit hash on `main` will be used).
+        token (`str | bool | None`): A valid user access token (string). Defaults to the locally
+            saved token, which is the recommended method for authentication (see
+            https://huggingface.co/docs/huggingface_hub/quick-start#authentication).
+            To disable authentication, pass `False`.
+        cache_dir (`str | pathlib.Path | None`): Path to the dir where cached files are stored.
+        local_dir (`str | pathlib.Path | None`): If provided, downloaded files will be placed under
+            this directory.
+        confirm_download_threshold_gb (`float`): The threshold (in GB) of additional (uncached) file
+            size beyond which the user is prompted for confirmation before downloading. Set to
+            `float("inf")` to disable confirmation.
+        features (`Features`): A representation of dataset features amenable to `.`-autocompletion.
+        clip_index (`pd.DataFrame`): A clip index mapping `clip_id`s to `chunk` indices.
+        sensor_presence (`pd.DataFrame`): A table mapping `clip_id`s to available sensors (notably,
+            includes the radar config & radar sensor models for each clip).
+        chunk_sensor_presence (`pd.DataFrame`): A table of sensor presence aggregated by chunk; used
+            to determine which per-chunk packed files should exist in the dataset.
+    """
+    def __init__(
+        self,
+        data_dir: str | pathlib.Path,
+        *,
+        confirm_download_threshold_gb: float = 10.0,
+    ) -> None:
+        self.data_dir = pathlib.Path(data_dir)
+        
+        if not self.data_dir.exists():
+            raise FileNotFoundError(f"Data directory not found: {self.data_dir}")
+        
+        super().__init__(
+            repo_id="nvidia/PhysicalAI-Autonomous-Vehicles",
+            repo_type="dataset",
+            revision="local",
+            token=False,
+            local_dir=self.data_dir,
+            confirm_download_threshold_gb=confirm_download_threshold_gb,
+        )
+
+        features_path = self._find_file("features.csv")
+        features_df = pd.read_csv(features_path, index_col="feature")
+
+        features_df["clip_files_in_zip"] = features_df["clip_files_in_zip"].map(
+            lambda x: json.loads(x) if isinstance(x, str) else x,
+            na_action="ignore"
+        )
+        self.features = Features(features_df)
+
+        self.clip_index = self._load_parquet("clip_index.parquet")
+        self.sensor_presence = self._load_parquet("metadata/sensor_presence.parquet")
+
+        if self.clip_index is not None and self.sensor_presence is not None:
+            self.chunk_sensor_presence = (
+                pd.concat(
+                    [self.clip_index[["chunk"]], self.sensor_presence.select_dtypes(include=bool)],
+                    axis=1,
+                )
+                .groupby("chunk")
+                .any()
+            )
+        else:
+            self.chunk_sensor_presence = None
+            
+        logger.info(f"Offline dataset initialized from {self.data_dir}")
+
+    def _find_file(self, filename: str) -> pathlib.Path:
+        """Search for files, supporting multiple possible paths"""
+        possible_paths = [
+            self.data_dir / filename,
+            self.data_dir / "data" / filename,
+        ]
+        
+        for path in possible_paths:
+            if path.exists():
+                return path
+        
+        try:
+            return pathlib.Path(self.download_file(filename))
+        except FileNotFoundError:
+            raise FileNotFoundError(f"File '{filename}' not found in {self.data_dir}")
+
+    def _load_parquet(self, filename: str) -> pd.DataFrame | None:
+        try:
+            filepath = self._find_file(filename)
+            return pd.read_parquet(filepath)
+        except FileNotFoundError:
+            logger.warning(f"File '{filename}' not found, skipping")
+            return None
+
+    def download_metadata(self) -> None:
+        """load all metadata"""
+        metadata_dir = self.data_dir / "metadata"
+        if not metadata_dir.exists():
+            raise FileNotFoundError(f"Metadata directory not found: {metadata_dir}")
+        
+        self.metadata = {}
+        for parquet_file in metadata_dir.glob("*.parquet"):
+            try:
+                df = pd.read_parquet(parquet_file)
+                self.metadata[parquet_file.stem] = df
+                logger.debug(f"Loaded metadata: {parquet_file.stem}")
+            except Exception as e:
+                logger.warning(f"Failed to load {parquet_file}: {e}")
+
+    def get_clip_chunk(self, clip_id: str) -> int:
+        """get chunk id"""
+        if self.clip_index is None:
+            raise ValueError("clip_index.parquet not loaded")
+        
+        if clip_id not in self.clip_index.index:
+            raise KeyError(f"Clip ID '{clip_id}' not found in clip_index")
+        
+        return self.clip_index.at[clip_id, "chunk"]
+
+    def get_clip_feature(self, clip_id: str, feature: str, maybe_stream: bool = False) -> Any:
+        """get feature from local"""
+        chunk_id = self.get_clip_chunk(clip_id)
+        chunk_filename = self.features.get_chunk_feature_filename(chunk_id, feature)
+        
+        with self.open_file(chunk_filename, maybe_stream=False) as f:
+            if chunk_filename.endswith(".parquet"):
+                df = pd.read_parquet(f)
+                if clip_id in df.index:
+                    return df.loc[clip_id]
+                else:
+                    logger.warning(f"Clip ID '{clip_id}' not found in {chunk_filename}, returning full dataframe")
+                    return df
+                    
+            elif chunk_filename.endswith(".zip"):
+                clip_files_in_zip = self.features.get_clip_files_in_zip(clip_id, feature)
+                with zipfile.ZipFile(f, "r") as zf:
+                    if feature == "egomotion":
+                        ego_file = clip_files_in_zip.get("egomotion")
+                        if ego_file and ego_file in zf.namelist():
+                            ego_df = pd.read_parquet(
+                                io.BytesIO(zf.read(ego_file))
+                            )
+                            return egomotion.EgomotionState.from_egomotion_df(
+                                ego_df
+                            ).create_interpolator(ego_df["timestamp"].to_numpy())
+                            
+                    elif feature.startswith("camera"):
+                        video_file = clip_files_in_zip.get("video")
+                        timestamps_file = clip_files_in_zip.get("frame_timestamps")
+                        
+                        if video_file and timestamps_file:
+                            return video.SeekVideoReader(
+                                video_data=io.BytesIO(zf.read(video_file)),
+                                timestamps=pd.read_parquet(
+                                    io.BytesIO(zf.read(timestamps_file))
+                                )["timestamp"].to_numpy(),
+                            )
+                            
+                    result = {}
+                    for k, v in clip_files_in_zip.items():
+                        if v in zf.namelist():
+                            if v.endswith(".parquet"):
+                                result[k] = pd.read_parquet(io.BytesIO(zf.read(v)))
+                            else:
+                                result[k] = io.BytesIO(zf.read(v))
+                    return result
+                    
+            else:
+                raise ValueError(f"Unexpected file extension: {chunk_filename}")
+
+    def list_available_clips(self) -> list[str]:
+        """list all available clip ID"""
+        if self.clip_index is None:
+            return []
+        return list(self.clip_index.index)
+
+    def list_available_chunks(self) -> list[int]:
+        """list all available chunk ID"""
+        if self.clip_index is None:
+            return []
+        return sorted(self.clip_index["chunk"].unique())
