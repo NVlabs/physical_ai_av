@@ -279,3 +279,137 @@ class HfRepoInterface:
                 f"{filename=} not found in cache; "
                 "set `maybe_stream=True` to enable streaming from HF Hub."
             )
+
+class OfflineHfRepoInterface:
+    """Fully offline simulation of Hugging Face repository interface.
+
+    This class is a thin wrapper around Hugging Face Hub's
+        - [`HfApi`](https://huggingface.co/docs/huggingface_hub/main/en/package_reference/hf_api) and
+        - [`HfFileSystem`](https://huggingface.co/docs/huggingface_hub/main/en/package_reference/hf_file_system)
+    with utility methods added for working with very large (in terms of both file count and total
+    file size) repositories.
+
+    Attributes:
+        api (`huggingface_hub.HfApi`): Hugging Face Hub API client.
+        fs (`huggingface_hub.HfFileSystem`): Hugging Face Hub file system interface.
+        repo_id (`str`): A user or an organization name and a repo name separated by a `/`.
+        repo_type (`str | None`): `"dataset"` if the repo is a dataset, `"space"` if the repo is a
+            space, `None` or `"model"` if the repo is a model.
+        revision (`str`): A Git revision id, which can be a branch name, a tag, or a commit hash
+            (if not supplied at initialization, the latest commit hash on `main` will be used).
+        repo_snapshot_info (`dict`): A dictionary containing the `repo_id`, `repo_type`, and
+            `revision` for simpler unpacking into `api` method calls.
+        token (`str | bool | None`): A valid user access token (string). Defaults to the locally
+            saved token, which is the recommended method for authentication (see
+            https://huggingface.co/docs/huggingface_hub/quick-start#authentication).
+            To disable authentication, pass `False`.
+        cache_dir (`str | pathlib.Path | None`): Path to the dir where cached files are stored.
+        local_dir (`str | pathlib.Path | None`): If provided, downloaded files will be placed under
+            this directory.
+        confirm_download_threshold_gb (`float`): The threshold (in GB) of additional (uncached) file
+            size beyond which the user is prompted for confirmation before downloading. Set to
+            `float("inf")` to disable confirmation.
+    """
+    def __init__(
+        self,
+        repo_id: str,
+        repo_type: str | None = None,
+        revision: str | None = None,
+        *,
+        token: str | bool | None = None,
+        cache_dir: str | pathlib.Path | None = None,
+        local_dir: str | pathlib.Path | None = None,
+        confirm_download_threshold_gb: float = 10.0,
+    ) -> None:
+        self.token = token
+        self.repo_id = repo_id
+        self.repo_type = repo_type
+        self.revision = revision or "local"
+        
+        if local_dir is None:
+            raise ValueError("local_dir must be provided for offline mode")
+        
+        self.local_dir = pathlib.Path(local_dir)
+        if not self.local_dir.exists():
+            raise FileNotFoundError(f"Local directory not found: {self.local_dir}")
+            
+        self.cache_dir = cache_dir
+        self.confirm_download_threshold_gb = confirm_download_threshold_gb
+        
+        self.repo_snapshot_info = {
+            "repo_id": self.repo_id,
+            "repo_type": self.repo_type,
+            "revision": self.revision,
+        }
+        
+        logger.info(f"Offline mode enabled. Using local directory: {self.local_dir}")
+
+    def is_file_cached(self, filename: str) -> bool:
+        """check local files"""
+        local_path = self.local_dir / filename
+        return local_path.exists()
+
+    def download_file(self, filename: str, **kwargs) -> str:
+        """Simulate downloading files, but actually return the local path"""
+        local_path = self.local_dir / filename
+        
+        if local_path.exists():
+            return str(local_path)
+            
+        possible_paths = [
+            local_path,
+            self.local_dir / "data" / filename,
+            self.local_dir / filename.split("/")[-1],
+        ]
+        
+        for path in possible_paths:
+            if path.exists():
+                return str(path)
+        
+        raise FileNotFoundError(
+            f"File '{filename}' not found in local directory {self.local_dir}. "
+            f"Please make sure all data files are available locally."
+        )
+
+    def download_files(self, files: list[str], max_workers: int = 8, **kwargs) -> list[str]:
+        results = []
+        for filename in files:
+            try:
+                result = self.download_file(filename, **kwargs)
+                results.append(result)
+                logger.debug(f"Successfully loaded: {filename}")
+            except FileNotFoundError as e:
+                logger.warning(f"Failed to load: {filename} - {e}")
+                if not kwargs.get("dry_run", False):
+                    raise
+        return results
+
+    def download_repo_tree(
+        self, path_in_repo: str, recursive: bool = True, **kwargs
+    ) -> list[str]:
+        dir_path = self.local_dir / path_in_repo
+        if not dir_path.exists():
+            return []
+        
+        files = []
+        pattern = "**/*" if recursive else "*"
+        
+        for file_path in dir_path.glob(pattern):
+            if file_path.is_file():
+                rel_path = file_path.relative_to(self.local_dir)
+                files.append(str(file_path))
+        
+        return files
+
+    @contextlib.contextmanager
+    def open_file(
+        self, filename: str, mode: str = "rb", maybe_stream: bool = False
+    ) -> Iterator[io.BytesIO]:
+        """open local file"""
+        filepath = self.download_file(filename)
+        
+        with open(filepath, mode) as f:
+            yield f
+
+    def __repr__(self) -> str:
+        return f"OfflineHfRepoInterface(local_dir={self.local_dir!r})"

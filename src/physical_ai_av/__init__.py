@@ -4,7 +4,7 @@ import importlib.metadata
 import logging
 
 from .utils.hf_interface import HfRepoInterface
-from .dataset import PhysicalAIAVDatasetInterface
+from .dataset import PhysicalAIAVDatasetInterface, OfflinePhysicalAIAVDatasetInterface
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
