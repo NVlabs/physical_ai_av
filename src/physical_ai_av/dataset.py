@@ -13,7 +13,6 @@ import pandas as pd
 from physical_ai_av import egomotion, video
 from physical_ai_av.utils import hf_interface
 
-import importlib.util
 
 logger = logging.getLogger(__name__)
 
