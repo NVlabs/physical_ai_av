@@ -15,13 +15,6 @@ from physical_ai_av.utils import hf_interface
 
 import importlib.util
 
-# Fast check for optional dependencies
-_TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
-
-
-
-
-
 logger = logging.getLogger(__name__)
 
 
@@ -134,7 +127,7 @@ class PhysicalAIAVDatasetInterface(hf_interface.HfRepoInterface):
                     )
         self.download_files(files_to_download, **kwargs)
 
-    def get_clip_feature(self, clip_id: str, feature: str, maybe_stream: bool = False, use_torch_codec: bool = False) -> Any:
+    def get_clip_feature(self, clip_id: str, feature: str, maybe_stream: bool = False) -> Any:
         chunk_filename = self.features.get_chunk_feature_filename(
             self.get_clip_chunk(clip_id), feature
         )
@@ -157,18 +150,8 @@ class PhysicalAIAVDatasetInterface(hf_interface.HfRepoInterface):
                                 io.BytesIO(zf.read(clip_files_in_zip["frame_timestamps"]))
                             )["timestamp"].to_numpy()
 
-                        if use_torch_codec:
-                            if not _TORCH_AVAILABLE:
-                                raise RuntimeError(
-                                    "use_torch_codec=True requires PyTorch to be installed, but torch was not found."
-                                )
-
-                            return video.TorchCodecVideoReader(
-                                video_data=video_data,
-                                timestamps=timestamps
-                            )
-                        else:
-                            return video.SeekVideoReader(
+                        
+                        return video.SeekVideoReader(
                                 video_data=video_data,
                                 timestamps=timestamps,
                             )
