@@ -34,7 +34,6 @@ def load_physical_aiavdataset(
     time_step: float = 0.1,
     camera_features: list | None = None,
     num_frames: int = 4,
-    data_dir: str = None,
 ) -> dict[str, Any]:
     """Load data from physical_ai_av for model inference.
 
@@ -69,7 +68,7 @@ def load_physical_aiavdataset(
             - clip_id: The clip ID
     """
     if avdi is None:
-        avdi = physical_ai_av.OfflinePhysicalAIAVDatasetInterface(data_dir=data_dir)
+        avdi = physical_ai_av.OfflinePhysicalAIAVDatasetInterface(data_dir='data/PhysicalAI-Autonomous-Vehicles-base-wo-lidar-radar')
 
     if camera_features is None:
         camera_features = [
@@ -93,10 +92,8 @@ def load_physical_aiavdataset(
     egomotion = avdi.get_clip_feature(
         clip_id,
         avdi.features.LABELS.EGOMOTION,
-        maybe_stream=False
+        maybe_stream=maybe_stream,
     )
-
-
 
     assert t0_us > num_history_steps * time_step * 1_000_000, (
         "t0_us must be greater than the history time range"
@@ -136,7 +133,7 @@ def load_physical_aiavdataset(
     t0_rot = spt.Rotation.from_quat(t0_quat)
     t0_rot_inv = t0_rot.inv()
 
-    # Transform history positions to local frame  # t0_rot_inv is world2ego_r
+    # Transform history positions to local frame
     ego_history_xyz_local = t0_rot_inv.apply(ego_history_xyz - t0_xyz)
 
     # Transform future positions to local frame
@@ -221,8 +218,8 @@ def load_physical_aiavdataset(
         "clip_id": clip_id,
     }
 
-if __name__ == '__main__':
-    data_dir = '/home/xingao/code/Alpamayo/data/PhysicalAI-Autonomous-Vehicles'
-    clip_id = "5c8a7587-d850-474c-b297-7a633d0538d1"
-    data = load_physical_aiavdataset(clip_id=clip_id, data_dir=data_dir)
+
+if __name__ == "__main__":
+    clip_id = "0a0684be-9eb3-4431-a4e7-df826224c6be"  # Example clip ID
+    data = load_physical_aiavdataset(clip_id, t0_us=5_100_000)
     print(data)

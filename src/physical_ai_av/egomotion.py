@@ -31,10 +31,10 @@ class EgomotionState(interpolation.Interpolatable, tf.Transformable):
     def from_egomotion_df(cls, egomotion_df: pd.DataFrame) -> Self:
         return cls(
             pose=spt.RigidTransform.from_components(
-                rotation=spt.Rotation.from_quat(egomotion_df[["qx", "qy", "qz", "qw"]].to_numpy()),
-                translation=egomotion_df[["x", "y", "z"]].to_numpy(),
+                rotation=spt.Rotation.from_quat(egomotion_df[["qx", "qy", "qz", "qw"]].to_numpy().copy()),
+                translation=egomotion_df[["x", "y", "z"]].to_numpy().copy(),
             ),
-            velocity=egomotion_df[["vx", "vy", "vz"]].to_numpy(),
-            acceleration=egomotion_df[["ax", "ay", "az"]].to_numpy(),
-            curvature=egomotion_df[["curvature"]].to_numpy(),
+            velocity=egomotion_df[["vx", "vy", "vz"]].to_numpy().copy(),
+            acceleration=egomotion_df[["ax", "ay", "az"]].to_numpy().copy(),
+            curvature=egomotion_df[["curvature"]].to_numpy().copy(),
         )
