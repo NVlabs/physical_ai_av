@@ -15,13 +15,18 @@
 
 """Load data from physical_ai_av.PhysicalAIAVDatasetInterface for model inference."""
 
+import os
 from typing import Any
 
 import numpy as np
 import physical_ai_av
 import scipy.spatial.transform as spt
 import torch
+from dotenv import load_dotenv
 from einops import rearrange
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 def load_physical_aiavdataset(
@@ -68,7 +73,14 @@ def load_physical_aiavdataset(
             - clip_id: The clip ID
     """
     if avdi is None:
-        avdi = physical_ai_av.OfflinePhysicalAIAVDatasetInterface(data_dir='data/PhysicalAI-Autonomous-Vehicles-base-wo-lidar-radar')
+        data_dir = os.getenv("PHYSICAL_AI_AV_DATA_DIR")
+        if data_dir is None:
+            raise ValueError(
+                "PHYSICAL_AI_AV_DATA_DIR environment variable not set. "
+                "Please create a .env file with the data directory path, "
+                "or set the environment variable directly."
+            )
+        avdi = physical_ai_av.OfflinePhysicalAIAVDatasetInterface(data_dir=data_dir)
 
     if camera_features is None:
         camera_features = [
