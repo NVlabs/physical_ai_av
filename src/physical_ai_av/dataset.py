@@ -70,6 +70,9 @@ class PhysicalAIAVDatasetInterface(hf_interface.HfRepoInterface):
         self.sensor_presence = pd.read_parquet(
             self.download_file("metadata/sensor_presence.parquet")
         )
+        self.data_collection = pd.read_parquet(
+            self.download_file("metadata/data_collection.parquet")
+        )
         self.chunk_sensor_presence = (
             pd.concat(
                 [self.clip_index[["chunk"]], self.sensor_presence.select_dtypes(include=bool)],
