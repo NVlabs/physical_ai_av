@@ -1,20 +1,20 @@
 [project]
 name = "physical_ai_av"
-version = "0.1.0"
+version = "0.1.1"
 description = "Developer kit for working with the NVIDIA Physical AI Autonomous Vehicles Dataset"
 readme = "README.md"
 authors = [
     { name = "NVIDIA", email = "eschmerling@nvidia.com" }
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
     "av>=14.4.0",
     "huggingface-hub>=0.36.0",
-    "numpy>=2.0.0",
-    "pandas>=2.2.3",
-    "pyarrow>=20.0.0",
-    "scipy>=1.16.0",
-    "tqdm>=4.65.0",
+    "numpy",
+    "pandas",
+    "pyarrow",
+    "scipy",
+    "tqdm",
 ]
 
 [build-system]

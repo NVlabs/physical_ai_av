@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 import dataclasses
 import enum
-from typing import Callable, ClassVar
+from typing import Callable, ClassVar, Generic, TypeVar
 
 import numpy as np
 import numpy.typing as npt
@@ -92,8 +92,12 @@ def create_interpolant(
     raise ValueError(f"Unknown {interpolation_method=}.")
 
 
+
+T = TypeVar('InterpolatorType')
+
+
 @dataclasses.dataclass
-class Interpolator[T: Interpolatable]:
+class Interpolator(Generic[T]):
     """Interpolator for dataclasses with interpolation method specified by field metadata."""
 
     timestamps: npt.NDArray[np.int64]
