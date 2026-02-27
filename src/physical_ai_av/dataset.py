@@ -155,13 +155,13 @@ class PhysicalAIAVDatasetInterface(hf_interface.HfRepoInterface):
                         )
                         return egomotion.EgomotionState.from_egomotion_df(
                             egomotion_df
-                        ).create_interpolator(egomotion_df["timestamp"].to_numpy())
+                        ).create_interpolator(egomotion_df["timestamp"].to_numpy(copy=True))
                     elif feature.startswith("camera"):
                         return video.SeekVideoReader(
                             video_data=io.BytesIO(zf.read(clip_files_in_zip["video"])),
                             timestamps=pd.read_parquet(
                                 io.BytesIO(zf.read(clip_files_in_zip["frame_timestamps"]))
-                            )["timestamp"].to_numpy(),
+                            )["timestamp"].to_numpy(copy=True),
                         )
                     else:
                         logger.warning(

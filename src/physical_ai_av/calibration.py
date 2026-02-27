@@ -35,9 +35,9 @@ class SensorExtrinsics:
             sensor_poses={
                 sensor_id: spt.RigidTransform.from_components(
                     rotation=spt.Rotation.from_quat(
-                        extrinsics_df.loc[sensor_id, ["qx", "qy", "qz", "qw"]].to_numpy()
+                        extrinsics_df.loc[sensor_id, ["qx", "qy", "qz", "qw"]].to_numpy(copy=True)
                     ),
-                    translation=extrinsics_df.loc[sensor_id, ["x", "y", "z"]].to_numpy(),
+                    translation=extrinsics_df.loc[sensor_id, ["x", "y", "z"]].to_numpy(copy=True),
                 )
                 for sensor_id in extrinsics_df.index
             },
