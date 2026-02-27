@@ -92,8 +92,7 @@ def create_interpolant(
     raise ValueError(f"Unknown {interpolation_method=}.")
 
 
-
-T = TypeVar('InterpolatorType')
+T = TypeVar("T", bound="Interpolatable")
 
 
 @dataclasses.dataclass
