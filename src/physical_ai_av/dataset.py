@@ -68,7 +68,7 @@ class PhysicalAIAVDatasetInterface(hf_interface.HfRepoInterface):
 
         self.clip_index = pd.read_parquet(self.download_file("clip_index.parquet"))
         self.sensor_presence = pd.read_parquet(
-            self.download_file("metadata/sensor_presence.parquet")
+            self.download_file("metadata/feature_presence.parquet")
         )
         self.data_collection = pd.read_parquet(
             self.download_file("metadata/data_collection.parquet")
