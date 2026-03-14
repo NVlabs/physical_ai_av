@@ -203,7 +203,10 @@ class Features:
                 self,
                 directory.upper(),
                 types.SimpleNamespace(
-                    **{feature.upper(): feature for feature in directory_features.index},
+                    **{
+                        feature.upper().replace(".", "_"): feature
+                        for feature in directory_features.index
+                    },
                     ALL=set(directory_features.index),
                 ),
             )
