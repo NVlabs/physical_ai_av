@@ -36,10 +36,9 @@ class PhysicalAIAVDatasetInterface(hf_interface.HfRepoInterface):
             `float("inf")` to disable confirmation.
         features (`Features`): A representation of dataset features amenable to `.`-autocompletion.
         clip_index (`pd.DataFrame`): A clip index mapping `clip_id`s to `chunk` indices.
-        sensor_presence (`pd.DataFrame`): A table mapping `clip_id`s to available sensors (notably,
-            includes the radar config & radar sensor models for each clip).
-        chunk_sensor_presence (`pd.DataFrame`): A table of sensor presence aggregated by chunk; used
-            to determine which per-chunk packed files should exist in the dataset.
+        feature_presence (`pd.DataFrame`): A table mapping `clip_id`s to available features.
+        chunk_feature_presence (`pd.DataFrame`): A table of feature presence aggregated by chunk;
+            used to determine which per-chunk packed files should exist in the dataset.
     """
 
     def __init__(
@@ -67,15 +66,25 @@ class PhysicalAIAVDatasetInterface(hf_interface.HfRepoInterface):
         self.features = Features(features_df)
 
         self.clip_index = pd.read_parquet(self.download_file("clip_index.parquet"))
-        self.sensor_presence = pd.read_parquet(
-            self.download_file("metadata/sensor_presence.parquet")
-        )
+        if self.api.file_exists(
+            filename="metadata/feature_presence.parquet", **self.repo_snapshot_info
+        ):
+            self.feature_presence = pd.read_parquet(
+                self.download_file("metadata/feature_presence.parquet")
+            )
+        else:
+            # Fallback to older `sensor_presence.parquet` in dataset revisions prior to 26.03.
+            self.sensor_presence = pd.read_parquet(
+                self.download_file("metadata/sensor_presence.parquet")
+            )
+            self.feature_presence = self.sensor_presence.select_dtypes(include=bool)
+
         self.data_collection = pd.read_parquet(
             self.download_file("metadata/data_collection.parquet")
         )
-        self.chunk_sensor_presence = (
+        self.chunk_feature_presence = (
             pd.concat(
-                [self.clip_index[["chunk"]], self.sensor_presence.select_dtypes(include=bool)],
+                [self.clip_index[["chunk"]], self.feature_presence],
                 axis=1,
             )
             .groupby("chunk")
@@ -116,8 +125,8 @@ class PhysicalAIAVDatasetInterface(hf_interface.HfRepoInterface):
         for chunk_id in chunk_id:
             for feature in features:
                 if (
-                    feature not in self.chunk_sensor_presence.columns
-                    or self.chunk_sensor_presence.at[chunk_id, feature]
+                    feature not in self.chunk_feature_presence.columns
+                    or self.chunk_feature_presence.at[chunk_id, feature]
                 ):
                     files_to_download.append(
                         self.features.get_chunk_feature_filename(chunk_id, feature)
