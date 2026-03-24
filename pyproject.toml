@@ -1,6 +1,6 @@
 [project]
 name = "physical_ai_av"
-version = "0.2.0"
+version = "0.2.1"
 description = "Developer kit for working with the NVIDIA Physical AI Autonomous Vehicles Dataset"
 readme = "README.md"
 authors = [
