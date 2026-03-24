@@ -71,6 +71,10 @@ class HfRepoInterface:
         self.repo_id = repo_id
         self.repo_type = repo_type
         if revision is None:
+            if huggingface_hub.is_offline_mode():
+                raise hf_utils.OfflineModeIsEnabled(
+                    "`revision` must be specified when offline mode is enabled."
+                )
             for branch in self.api.list_repo_refs(
                 repo_id=self.repo_id,
                 repo_type=self.repo_type,
@@ -225,18 +229,42 @@ class HfRepoInterface:
                 tqdm_class=tqdm_class,
             )
 
-    def download_file(self, filename: str, **kwargs) -> str | DryRunFileInfo:
-        """Downloads `filename`; see `HfApi.hf_hub_download` for more kwargs."""
-        if self.is_file_cached(filename) or self._confirm_download(
-            self.api.get_paths_info(paths=[filename], **self.repo_snapshot_info)[0].size
-        ):
-            return self.api.hf_hub_download(
-                filename=filename,
-                cache_dir=self.cache_dir,
-                local_dir=self.local_dir,
-                **self.repo_snapshot_info,
-                **kwargs,
-            )
+    def download_file(self, filename: str, **kwargs) -> str | DryRunFileInfo | None:
+        """Downloads `filename`; see `HfApi.hf_hub_download` for more kwargs.
+
+        Similar to `HfApi.hf_hub_download`, if the file is cached it will not be re-downloaded
+        (unless the `force_download=True` kwarg is passed) and the existing cached filepath will be
+        returned. In particular, this function is safe to use with the environment variable
+        `HF_HUB_OFFLINE=1` to get locations of cached files (provided they've been pre-downloaded)
+        while offline.
+
+        Args:
+            filename (`str`): The filename (relative to the repo root) to download.
+            **kwargs: Additional keyword arguments to pass to `HfApi.hf_hub_download`.
+
+        Returns:
+            `str | DryRunFileInfo | None`: The path to the downloaded/cached file, dry-run info (if
+                the `dry_run=True` kwarg is passed), or `None` (if the file download is skipped).
+        """
+        if not self.is_file_cached(filename):
+            if huggingface_hub.is_offline_mode():
+                raise hf_utils.OfflineModeIsEnabled(
+                    f"{filename=} not found in cache and offline mode is enabled."
+                )
+            path_info = self.api.get_paths_info(paths=[filename], **self.repo_snapshot_info)
+            if len(path_info) == 0:
+                raise ValueError(f"{filename=} not found in {self.repo_snapshot_info}.")
+            path_info = path_info[0]
+            if not self._confirm_download(path_info.size):
+                logger.info(f"Skipping download of {filename=}.")
+                return
+        return self.api.hf_hub_download(
+            filename=filename,
+            cache_dir=self.cache_dir,
+            local_dir=self.local_dir,
+            **self.repo_snapshot_info,
+            **kwargs,
+        )
 
     def download_repo_tree(
         self, path_in_repo: str, recursive: bool = True, **kwargs

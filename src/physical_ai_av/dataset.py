@@ -8,6 +8,8 @@ import types
 import zipfile
 from typing import Any, Iterable
 
+import huggingface_hub
+import huggingface_hub.utils as hf_utils
 import pandas as pd
 
 from physical_ai_av import calibration, egomotion, video
@@ -66,7 +68,16 @@ class PhysicalAIAVDatasetInterface(hf_interface.HfRepoInterface):
         self.features = Features(features_df)
 
         self.clip_index = pd.read_parquet(self.download_file("clip_index.parquet"))
-        if self.api.file_exists(
+        if (
+            huggingface_hub.is_offline_mode()
+            and not self.is_file_cached("metadata/feature_presence.parquet")
+            and not self.is_file_cached("metadata/sensor_presence.parquet")
+        ):
+            raise hf_utils.OfflineModeIsEnabled(
+                "Offline mode is enabled and neither `metadata/feature_presence.parquet` (current) "
+                "nor `metadata/sensor_presence.parquet` (legacy, pre-26.03) are cached."
+            )
+        if self.is_file_cached("metadata/feature_presence.parquet") or self.api.file_exists(
             filename="metadata/feature_presence.parquet", **self.repo_snapshot_info
         ):
             self.feature_presence = pd.read_parquet(
