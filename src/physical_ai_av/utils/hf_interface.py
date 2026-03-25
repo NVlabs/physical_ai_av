@@ -67,11 +67,15 @@ class HfRepoInterface:
         self.token = token
         self.api = huggingface_hub.HfApi(token=self.token)
         self.fs = huggingface_hub.HfFileSystem(token=self.token)
+        if huggingface_hub.__version__ >= "1.2.1":
+            self.is_offline_mode = huggingface_hub.is_offline_mode()
+        else:
+            self.is_offline_mode = huggingface_hub.constants.HF_HUB_OFFLINE
 
         self.repo_id = repo_id
         self.repo_type = repo_type
         if revision is None:
-            if huggingface_hub.is_offline_mode():
+            if self.is_offline_mode:
                 raise hf_utils.OfflineModeIsEnabled(
                     "`revision` must be specified when offline mode is enabled."
                 )
@@ -247,7 +251,7 @@ class HfRepoInterface:
                 the `dry_run=True` kwarg is passed), or `None` (if the file download is skipped).
         """
         if not self.is_file_cached(filename):
-            if huggingface_hub.is_offline_mode():
+            if self.is_offline_mode:
                 raise hf_utils.OfflineModeIsEnabled(
                     f"{filename=} not found in cache and offline mode is enabled."
                 )

@@ -1077,7 +1077,7 @@ wheels = [
 
 [[package]]
 name = "physical-ai-av"
-version = "0.2.0"
+version = "0.2.2"
 source = { editable = "." }
 dependencies = [
     { name = "av" },

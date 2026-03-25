@@ -69,7 +69,7 @@ class PhysicalAIAVDatasetInterface(hf_interface.HfRepoInterface):
 
         self.clip_index = pd.read_parquet(self.download_file("clip_index.parquet"))
         if (
-            huggingface_hub.is_offline_mode()
+            self.is_offline_mode
             and not self.is_file_cached("metadata/feature_presence.parquet")
             and not self.is_file_cached("metadata/sensor_presence.parquet")
         ):
