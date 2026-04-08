@@ -13,7 +13,7 @@ dependencies = [
     "numpy",
     "pandas",
     "pyarrow",
-    "scipy",
+    "scipy>=1.16.0",
     "tqdm",
 ]
 
