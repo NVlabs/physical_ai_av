@@ -99,6 +99,42 @@ class HfRepoInterface:
         self.local_dir = local_dir
         self.confirm_download_threshold_gb = confirm_download_threshold_gb
 
+    def _get_repo_filepath(
+        self, filename: str, subfolder: str | pathlib.Path | None = None
+    ) -> pathlib.PurePosixPath:
+        """Returns the repo-relative filepath for a filename and optional subfolder."""
+        relative_filepath = pathlib.PurePosixPath(filename)
+        if relative_filepath.is_absolute() or ".." in relative_filepath.parts:
+            raise ValueError(f"{filename=!r} must be a repo-relative path.")
+
+        if subfolder is None:
+            return relative_filepath
+
+        relative_subfolder = pathlib.PurePosixPath(subfolder)
+        if relative_subfolder.is_absolute() or ".." in relative_subfolder.parts:
+            raise ValueError(f"{subfolder=!r} must be a repo-relative path.")
+
+        return relative_subfolder / relative_filepath
+
+    def _get_local_filepath(
+        self, filename: str, subfolder: str | pathlib.Path | None = None
+    ) -> pathlib.Path | None:
+        """Returns `filename` resolved under `local_dir`, if `local_dir` is configured."""
+        if self.local_dir is None:
+            return None
+
+        relative_filepath = self._get_repo_filepath(filename, subfolder=subfolder)
+        return pathlib.Path(self.local_dir).joinpath(*relative_filepath.parts)
+
+    def _get_materialized_filepath(
+        self, filename: str, subfolder: str | pathlib.Path | None = None
+    ) -> pathlib.Path | None:
+        """Returns the local materialized filepath for `filename`, if it exists."""
+        local_filepath = self._get_local_filepath(filename, subfolder=subfolder)
+        if local_filepath is not None and local_filepath.is_file():
+            return local_filepath
+        return None
+
     def __repr__(self) -> str:
         """Returns a string representation of the repo snapshot identifying information."""
         return f"""{self.__class__.__name__}({
@@ -129,13 +165,37 @@ class HfRepoInterface:
         self, files: list[str | huggingface_hub.hf_api.RepoFile], max_workers: int = 8, **kwargs
     ) -> list[str | DryRunFileInfo]:
         """Downloads `files`; see `HfApi.hf_hub_download` for more kwargs."""
-        # NOTE: `HfApi.snapshot_download` (e.g., with a filter) seems to struggle with large repos,
-        # so here we implement our own multi-file downloader. We should check periodically to see
-        # if the upstream `huggingface_hub` utilities have improved for this use case.
         if kwargs.get("subfolder", None) is not None:
             raise ValueError(
                 "`subfolder` must be `None`, i.e., `files` must be relative to the repo root."
             )
+
+        original_files = files
+        original_filepaths = [
+            file if isinstance(file, str) else file.path for file in original_files
+        ]
+        materialized_filepaths = {}
+        if not kwargs.get("force_download", False):
+            materialized_filepaths = {
+                filename: str(materialized_filepath)
+                for filename in original_filepaths
+                if (materialized_filepath := self._get_materialized_filepath(filename)) is not None
+            }
+            files = [
+                file
+                for file, filename in zip(original_files, original_filepaths)
+                if filename not in materialized_filepaths
+            ]
+            if len(materialized_filepaths) > 0:
+                logger.info(
+                    f"Using {len(materialized_filepaths)} files already present in local_dir."
+                )
+            if len(files) == 0:
+                return [materialized_filepaths[filename] for filename in original_filepaths]
+
+        # NOTE: `HfApi.snapshot_download` (e.g., with a filter) seems to struggle with large repos,
+        # so here we implement our own multi-file downloader. We should check periodically to see
+        # if the upstream `huggingface_hub` utilities have improved for this use case.
         tqdm_class = kwargs.get("tqdm_class", None) or hf_tqdm
 
         if any(isinstance(file, str) for file in files):
@@ -225,13 +285,23 @@ class HfRepoInterface:
             tqdm_desc = f"Fetching {len(files)} files ({sum(is_cached_bools)} cached)"
             if kwargs.get("dry_run", False):
                 tqdm_desc = "[dry-run] " + tqdm_desc
-            return tqdm.contrib.concurrent.thread_map(
+            downloaded_filepaths = tqdm.contrib.concurrent.thread_map(
                 _download_file,
                 files,
                 desc=tqdm_desc,
                 max_workers=max_workers,
                 tqdm_class=tqdm_class,
             )
+            downloaded_filepaths = {
+                file.path: downloaded_filepath
+                for file, downloaded_filepath in zip(files, downloaded_filepaths)
+            }
+            return [
+                materialized_filepaths[filename]
+                if filename in materialized_filepaths
+                else downloaded_filepaths[filename]
+                for filename in original_filepaths
+            ]
 
     def download_file(self, filename: str, **kwargs) -> str | DryRunFileInfo | None:
         """Downloads `filename`; see `HfApi.hf_hub_download` for more kwargs.
@@ -250,6 +320,12 @@ class HfRepoInterface:
             `str | DryRunFileInfo | None`: The path to the downloaded/cached file, dry-run info (if
                 the `dry_run=True` kwarg is passed), or `None` (if the file download is skipped).
         """
+        materialized_filepath = self._get_materialized_filepath(
+            filename, subfolder=kwargs.get("subfolder", None)
+        )
+        if materialized_filepath is not None and not kwargs.get("force_download", False):
+            return str(materialized_filepath)
+
         if not self.is_file_cached(filename):
             if self.is_offline_mode:
                 raise hf_utils.OfflineModeIsEnabled(
@@ -291,7 +367,13 @@ class HfRepoInterface:
     def open_file(
         self, filename: str, mode="rb", maybe_stream: bool = False
     ) -> Iterator[io.BytesIO]:
-        """Opens `filename` from the cache if it exists, or streams it from HF Hub."""
+        """Opens `filename` from `local_dir`/cache if it exists, or streams it from HF Hub."""
+        materialized_filepath = self._get_materialized_filepath(filename)
+        if materialized_filepath is not None:
+            with open(materialized_filepath, mode) as f:
+                yield f
+            return
+
         filepath = huggingface_hub.try_to_load_from_cache(
             filename=filename,
             cache_dir=self.cache_dir,
