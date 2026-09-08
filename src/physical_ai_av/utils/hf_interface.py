@@ -37,8 +37,10 @@ class HfRepoInterface:
         repo_id (`str`): A user or an organization name and a repo name separated by a `/`.
         repo_type (`str | None`): `"dataset"` if the repo is a dataset, `"space"` if the repo is a
             space, `None` or `"model"` if the repo is a model.
-        revision (`str`): A Git revision id, which can be a branch name, a tag, or a commit hash
-            (if not supplied at initialization, the latest commit hash on `main` will be used).
+        revision (`str | None`): A Git revision id, which can be a branch name, a tag, or a
+            commit hash. If not supplied at initialization while online, the latest commit hash on
+            `main` will be used. If not supplied while offline, `local_dir` must be set and only
+            materialized files under `local_dir` can be used.
         repo_snapshot_info (`dict`): A dictionary containing the `repo_id`, `repo_type`, and
             `revision` for simpler unpacking into `api` method calls.
         token (`str | bool | None`): A valid user access token (string). Defaults to the locally
@@ -64,6 +66,7 @@ class HfRepoInterface:
         local_dir: str | pathlib.Path | None = None,
         confirm_download_threshold_gb: float = 10.0,
     ) -> None:
+        requested_revision = revision
         self.token = token
         self.api = huggingface_hub.HfApi(token=self.token)
         self.fs = huggingface_hub.HfFileSystem(token=self.token)
@@ -74,30 +77,41 @@ class HfRepoInterface:
 
         self.repo_id = repo_id
         self.repo_type = repo_type
+        self.cache_dir = cache_dir
+        self.local_dir = local_dir
+        self.confirm_download_threshold_gb = confirm_download_threshold_gb
         if revision is None:
-            if self.is_offline_mode:
+            if self.is_offline_mode and self.local_dir is None:
                 raise hf_utils.OfflineModeIsEnabled(
                     "`revision` must be specified when offline mode is enabled."
                 )
-            for branch in self.api.list_repo_refs(
-                repo_id=self.repo_id,
-                repo_type=self.repo_type,
-            ).branches:
-                if branch.name == "main":
-                    revision = branch.target_commit
-                    break
-            else:
-                raise ValueError("No `revision` specified and no `main` branch found on remote.")
+            elif not self.is_offline_mode:
+                for branch in self.api.list_repo_refs(
+                    repo_id=self.repo_id,
+                    repo_type=self.repo_type,
+                ).branches:
+                    if branch.name == "main":
+                        revision = branch.target_commit
+                        break
+                else:
+                    raise ValueError(
+                        "No `revision` specified and no `main` branch found on remote."
+                    )
+        elif self.local_dir is not None:
+            logger.warning(
+                "`local_dir` is set with `revision=%r`; files already present in `local_dir` "
+                "will be used without validating they match that revision. Missing files will %s.",
+                requested_revision,
+                "fall back to the versioned Hugging Face cache"
+                if self.is_offline_mode
+                else "be downloaded from the requested revision",
+            )
         self.revision = revision
         self.repo_snapshot_info = {
             "repo_id": self.repo_id,
             "repo_type": self.repo_type,
             "revision": self.revision,
         }
-
-        self.cache_dir = cache_dir
-        self.local_dir = local_dir
-        self.confirm_download_threshold_gb = confirm_download_threshold_gb
 
     def _get_repo_filepath(
         self, filename: str, subfolder: str | pathlib.Path | None = None
@@ -135,6 +149,52 @@ class HfRepoInterface:
             return local_filepath
         return None
 
+    def _get_cached_filepath(
+        self, filename: str, subfolder: str | pathlib.Path | None = None
+    ) -> pathlib.Path | None:
+        """Returns the cached filepath for `filename`, if it exists for this revision."""
+        if self.revision is None:
+            return None
+
+        relative_filepath = self._get_repo_filepath(filename, subfolder=subfolder)
+        filepath = huggingface_hub.try_to_load_from_cache(
+            filename=relative_filepath.as_posix(),
+            cache_dir=self.cache_dir,
+            **self.repo_snapshot_info,
+        )
+        if isinstance(filepath, str):
+            return pathlib.Path(filepath)
+        return None
+
+    def _resolve_local_filepath(
+        self,
+        filename: str,
+        subfolder: str | pathlib.Path | None = None,
+        *,
+        allow_cache: bool = True,
+    ) -> pathlib.Path | None:
+        """Returns the best available local filepath, preferring `local_dir` over the cache."""
+        materialized_filepath = self._get_materialized_filepath(filename, subfolder=subfolder)
+        if materialized_filepath is not None:
+            return materialized_filepath
+        if allow_cache:
+            return self._get_cached_filepath(filename, subfolder=subfolder)
+        return None
+
+    def _raise_file_not_available_offline(
+        self, filename: str, subfolder: str | pathlib.Path | None = None
+    ) -> None:
+        """Raises the appropriate error when `filename` cannot be downloaded."""
+        relative_filepath = self._get_repo_filepath(filename, subfolder=subfolder)
+        if self.revision is None and self.local_dir is not None:
+            raise FileNotFoundError(
+                f"{relative_filepath.as_posix()!r} not found in local_dir and "
+                "offline mode is enabled."
+            )
+        raise hf_utils.OfflineModeIsEnabled(
+            f"{relative_filepath.as_posix()!r} not found locally and offline mode is enabled."
+        )
+
     def __repr__(self) -> str:
         """Returns a string representation of the repo snapshot identifying information."""
         return f"""{self.__class__.__name__}({
@@ -154,17 +214,26 @@ class HfRepoInterface:
 
     def is_file_cached(self, filename: str) -> bool:
         """Returns `True` iff the file specified by `filename` is cached."""
-        return isinstance(
-            huggingface_hub.try_to_load_from_cache(
-                filename=filename, cache_dir=self.cache_dir, **self.repo_snapshot_info
-            ),
-            str,
-        )
+        return self._get_cached_filepath(filename) is not None
+
+    def is_file_materialized(self, filename: str) -> bool:
+        """Returns `True` iff the file specified by `filename` exists in local_dir."""
+        return self._get_materialized_filepath(filename) is not None
+
+    def is_file_available_locally(self, filename: str) -> bool:
+        """Returns `True` iff the file specified by `filename` exists locally."""
+        return self._resolve_local_filepath(filename) is not None
 
     def download_files(
         self, files: list[str | huggingface_hub.hf_api.RepoFile], max_workers: int = 8, **kwargs
     ) -> list[str | DryRunFileInfo]:
-        """Downloads `files`; see `HfApi.hf_hub_download` for more kwargs."""
+        """Downloads `files` from the Hugging Face Hub; see `HfApi.hf_hub_download`.
+
+        This is an online prefetch/download API, not the local serving path for a
+        materialized `local_dir` dataset. Use `open_file()` or higher-level feature accessors to
+        read files already present in `local_dir`. Offline mode can only return files already
+        available locally; it cannot discover or download missing Hub files.
+        """
         if kwargs.get("subfolder", None) is not None:
             raise ValueError(
                 "`subfolder` must be `None`, i.e., `files` must be relative to the repo root."
@@ -174,24 +243,34 @@ class HfRepoInterface:
         original_filepaths = [
             file if isinstance(file, str) else file.path for file in original_files
         ]
-        materialized_filepaths = {}
+        local_filepaths = {}
         if not kwargs.get("force_download", False):
-            materialized_filepaths = {
-                filename: str(materialized_filepath)
+            local_filepaths = {
+                filename: str(local_filepath)
                 for filename in original_filepaths
-                if (materialized_filepath := self._get_materialized_filepath(filename)) is not None
+                if (
+                    local_filepath := self._resolve_local_filepath(
+                        filename,
+                        allow_cache=self.is_offline_mode,
+                    )
+                )
+                is not None
             }
             files = [
                 file
                 for file, filename in zip(original_files, original_filepaths)
-                if filename not in materialized_filepaths
+                if filename not in local_filepaths
             ]
-            if len(materialized_filepaths) > 0:
-                logger.info(
-                    f"Using {len(materialized_filepaths)} files already present in local_dir."
-                )
+            if len(local_filepaths) > 0:
+                logger.info(f"Using {len(local_filepaths)} files already available locally.")
             if len(files) == 0:
-                return [materialized_filepaths[filename] for filename in original_filepaths]
+                return [local_filepaths[filename] for filename in original_filepaths]
+
+        if self.is_offline_mode and len(files) > 0:
+            file = files[0]
+            self._raise_file_not_available_offline(
+                file if isinstance(file, str) else file.path
+            )
 
         # NOTE: `HfApi.snapshot_download` (e.g., with a filter) seems to struggle with large repos,
         # so here we implement our own multi-file downloader. We should check periodically to see
@@ -297,8 +376,8 @@ class HfRepoInterface:
                 for file, downloaded_filepath in zip(files, downloaded_filepaths)
             }
             return [
-                materialized_filepaths[filename]
-                if filename in materialized_filepaths
+                local_filepaths[filename]
+                if filename in local_filepaths
                 else downloaded_filepaths[filename]
                 for filename in original_filepaths
             ]
@@ -320,23 +399,32 @@ class HfRepoInterface:
             `str | DryRunFileInfo | None`: The path to the downloaded/cached file, dry-run info (if
                 the `dry_run=True` kwarg is passed), or `None` (if the file download is skipped).
         """
-        materialized_filepath = self._get_materialized_filepath(
-            filename, subfolder=kwargs.get("subfolder", None)
-        )
-        if materialized_filepath is not None and not kwargs.get("force_download", False):
-            return str(materialized_filepath)
+        subfolder = kwargs.get("subfolder", None)
+        force_download = kwargs.get("force_download", False)
+        if not force_download:
+            local_filepath = self._resolve_local_filepath(
+                filename,
+                subfolder=subfolder,
+                allow_cache=self.is_offline_mode,
+            )
+            if local_filepath is not None:
+                return str(local_filepath)
 
-        if not self.is_file_cached(filename):
-            if self.is_offline_mode:
-                raise hf_utils.OfflineModeIsEnabled(
-                    f"{filename=} not found in cache and offline mode is enabled."
-                )
-            path_info = self.api.get_paths_info(paths=[filename], **self.repo_snapshot_info)
+        if self.is_offline_mode:
+            self._raise_file_not_available_offline(filename, subfolder=subfolder)
+
+        repo_filepath = self._get_repo_filepath(filename, subfolder=subfolder)
+        if self._get_cached_filepath(filename, subfolder=subfolder) is None:
+            path_info = self.api.get_paths_info(
+                paths=[repo_filepath.as_posix()], **self.repo_snapshot_info
+            )
             if len(path_info) == 0:
-                raise ValueError(f"{filename=} not found in {self.repo_snapshot_info}.")
+                raise ValueError(
+                    f"{repo_filepath.as_posix()!r} not found in {self.repo_snapshot_info}."
+                )
             path_info = path_info[0]
             if not self._confirm_download(path_info.size):
-                logger.info(f"Skipping download of {filename=}.")
+                logger.info(f"Skipping download of {repo_filepath.as_posix()!r}.")
                 return
         return self.api.hf_hub_download(
             filename=filename,
@@ -349,7 +437,11 @@ class HfRepoInterface:
     def download_repo_tree(
         self, path_in_repo: str, recursive: bool = True, **kwargs
     ) -> list[str | DryRunFileInfo]:
-        """Downloads `path_in_repo`; see `HfApi.hf_hub_download` for more kwargs."""
+        """Downloads `path_in_repo` from the Hugging Face Hub.
+
+        This is an online prefetch/download API because it lists the remote repo tree before
+        downloading files. It is not the local serving path for a materialized `local_dir` dataset.
+        """
         return self.download_files(
             [
                 repo_item
@@ -368,21 +460,16 @@ class HfRepoInterface:
         self, filename: str, mode="rb", maybe_stream: bool = False
     ) -> Iterator[io.BytesIO]:
         """Opens `filename` from `local_dir`/cache if it exists, or streams it from HF Hub."""
-        materialized_filepath = self._get_materialized_filepath(filename)
-        if materialized_filepath is not None:
-            with open(materialized_filepath, mode) as f:
+        local_filepath = self._resolve_local_filepath(filename)
+        if local_filepath is not None:
+            with open(local_filepath, mode) as f:
                 yield f
             return
 
-        filepath = huggingface_hub.try_to_load_from_cache(
-            filename=filename,
-            cache_dir=self.cache_dir,
-            **self.repo_snapshot_info,
-        )
-        if isinstance(filepath, str):
-            with open(filepath, mode) as f:
-                yield f
-        elif maybe_stream:
+        if self.is_offline_mode:
+            self._raise_file_not_available_offline(filename)
+
+        if maybe_stream:
             with self.fs.open(
                 ("datasets/" if self.repo_type == "dataset" else "") + f"{self.repo_id}/{filename}",
                 mode,
