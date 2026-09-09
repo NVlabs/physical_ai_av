@@ -70,16 +70,20 @@ class PhysicalAIAVDatasetInterface(hf_interface.HfRepoInterface):
         self.clip_index = pd.read_parquet(self.download_file("clip_index.parquet"))
         if (
             self.is_offline_mode
-            and not self.is_file_cached("metadata/feature_presence.parquet")
-            and not self.is_file_cached("metadata/sensor_presence.parquet")
+            and not self.is_file_available_locally("metadata/feature_presence.parquet")
+            and not self.is_file_available_locally("metadata/sensor_presence.parquet")
         ):
             raise hf_utils.OfflineModeIsEnabled(
                 "Offline mode is enabled and neither `metadata/feature_presence.parquet` (current) "
-                "nor `metadata/sensor_presence.parquet` (legacy, pre-26.03) are cached."
+                "nor `metadata/sensor_presence.parquet` (legacy, pre-26.03) are available locally."
             )
-        if self.is_file_cached("metadata/feature_presence.parquet") or self.api.file_exists(
-            filename="metadata/feature_presence.parquet", **self.repo_snapshot_info
-        ):
+
+        has_feature_presence = self.is_file_available_locally("metadata/feature_presence.parquet")
+        if not has_feature_presence and not self.is_offline_mode:
+            has_feature_presence = self.api.file_exists(
+                filename="metadata/feature_presence.parquet", **self.repo_snapshot_info
+            )
+        if has_feature_presence:
             self.feature_presence = pd.read_parquet(
                 self.download_file("metadata/feature_presence.parquet")
             )
