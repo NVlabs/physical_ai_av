@@ -230,52 +230,26 @@ class HfRepoInterface:
         """Downloads `files` from the Hugging Face Hub; see `HfApi.hf_hub_download`.
 
         This is an online prefetch/download API, not the local serving path for a
-        materialized `local_dir` dataset. Use `open_file()` or higher-level feature accessors to
-        read files already present in `local_dir`. Offline mode can only return files already
-        available locally; it cannot discover or download missing Hub files.
+        materialized `local_dir` dataset. It requires Hub access to discover and download files.
+        Use `open_file()` or higher-level feature accessors to read files already present in
+        `local_dir`.
         """
         if kwargs.get("subfolder", None) is not None:
             raise ValueError(
                 "`subfolder` must be `None`, i.e., `files` must be relative to the repo root."
             )
 
-        original_files = files
-        original_filepaths = [
-            file if isinstance(file, str) else file.path for file in original_files
-        ]
-        local_filepaths = {}
-        if not kwargs.get("force_download", False):
-            local_filepaths = {
-                filename: str(local_filepath)
-                for filename in original_filepaths
-                if (
-                    local_filepath := self._resolve_local_filepath(
-                        filename,
-                        allow_cache=self.is_offline_mode,
-                    )
-                )
-                is not None
-            }
-            files = [
-                file
-                for file, filename in zip(original_files, original_filepaths)
-                if filename not in local_filepaths
-            ]
-            if len(local_filepaths) > 0:
-                logger.info(f"Using {len(local_filepaths)} files already available locally.")
-            if len(files) == 0:
-                return [local_filepaths[filename] for filename in original_filepaths]
-
-        if self.is_offline_mode and len(files) > 0:
-            file = files[0]
-            self._raise_file_not_available_offline(
-                file if isinstance(file, str) else file.path
+        if self.is_offline_mode:
+            raise hf_utils.OfflineModeIsEnabled(
+                "`download_files()` requires online mode because it fetches file metadata from "
+                "the Hugging Face Hub. Use `open_file()` or higher-level feature accessors to "
+                "read files already present in `local_dir`."
             )
 
         # NOTE: `HfApi.snapshot_download` (e.g., with a filter) seems to struggle with large repos,
         # so here we implement our own multi-file downloader. We should check periodically to see
         # if the upstream `huggingface_hub` utilities have improved for this use case.
-        tqdm_class = kwargs.get("tqdm_class", None) or hf_tqdm
+        tqdm_class = kwargs.pop("tqdm_class", None) or hf_tqdm
 
         if any(isinstance(file, str) for file in files):
             try:
@@ -342,8 +316,26 @@ class HfRepoInterface:
                     def __exit__(self, exc_type, exc_value, traceback):
                         pass
 
+                    def close(self) -> None:
+                        pass
+
                     def update(self, n: int | float | None = 1) -> None:
                         bytes_progress.update(n)
+
+                    def set_postfix_str(self, postfix: str, refresh: bool = False) -> None:
+                        pass
+
+                    def update_transfer(self, n: int | float | None = 1) -> None:
+                        # Newer huggingface_hub Xet downloads use separate transfer and
+                        # reconstruction progress signals. This wrapper only owns one aggregate
+                        # byte bar, so `update()` is the only method that advances it; advancing
+                        # here as well would double-count HTTP downloads that emit both signals.
+                        pass
+
+                    def set_transfer_postfix_str(
+                        self, postfix: str, refresh: bool = False
+                    ) -> None:
+                        pass
 
             def _download_file(
                 file: huggingface_hub.hf_api.RepoFile,
@@ -371,16 +363,7 @@ class HfRepoInterface:
                 max_workers=max_workers,
                 tqdm_class=tqdm_class,
             )
-            downloaded_filepaths = {
-                file.path: downloaded_filepath
-                for file, downloaded_filepath in zip(files, downloaded_filepaths)
-            }
-            return [
-                local_filepaths[filename]
-                if filename in local_filepaths
-                else downloaded_filepaths[filename]
-                for filename in original_filepaths
-            ]
+            return downloaded_filepaths
 
     def download_file(self, filename: str, **kwargs) -> str | DryRunFileInfo | None:
         """Downloads `filename`; see `HfApi.hf_hub_download` for more kwargs.
