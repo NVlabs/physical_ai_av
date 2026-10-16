@@ -17,6 +17,9 @@ dependencies = [
     "tqdm",
 ]
 
+[project.optional-dependencies]
+f4d = ["zarr>=2.18.7,<3"]
+
 [build-system]
 requires = ["uv_build>=0.9.7,<0.10.0"]
 build-backend = "uv_build"
