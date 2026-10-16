@@ -116,14 +116,15 @@ class HfRepoInterface:
             in ("y", "")
         )
 
+    def _get_cached_path(self, filename: str) -> str | None:
+        filepath = huggingface_hub.try_to_load_from_cache(
+            filename=filename, cache_dir=self.cache_dir, **self.repo_snapshot_info
+        )
+        return filepath if isinstance(filepath, str) else None
+
     def is_file_cached(self, filename: str) -> bool:
         """Returns `True` iff the file specified by `filename` is cached."""
-        return isinstance(
-            huggingface_hub.try_to_load_from_cache(
-                filename=filename, cache_dir=self.cache_dir, **self.repo_snapshot_info
-            ),
-            str,
-        )
+        return self._get_cached_path(filename) is not None
 
     def download_files(
         self, files: list[str | huggingface_hub.hf_api.RepoFile], max_workers: int = 8, **kwargs
@@ -292,18 +293,15 @@ class HfRepoInterface:
         self, filename: str, mode="rb", maybe_stream: bool = False
     ) -> Iterator[io.BytesIO]:
         """Opens `filename` from the cache if it exists, or streams it from HF Hub."""
-        filepath = huggingface_hub.try_to_load_from_cache(
-            filename=filename,
-            cache_dir=self.cache_dir,
-            **self.repo_snapshot_info,
-        )
-        if isinstance(filepath, str):
+        filepath = self._get_cached_path(filename)
+        if filepath is not None:
             with open(filepath, mode) as f:
                 yield f
         elif maybe_stream:
             with self.fs.open(
                 ("datasets/" if self.repo_type == "dataset" else "") + f"{self.repo_id}/{filename}",
                 mode,
+                revision=self.revision,
             ) as f:
                 yield f
         else:
