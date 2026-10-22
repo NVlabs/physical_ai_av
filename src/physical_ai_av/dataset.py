@@ -61,7 +61,9 @@ class PhysicalAIAVDatasetInterface(hf_interface.HfRepoInterface):
         cache_dir: str | pathlib.Path | None = None,
         local_dir: str | pathlib.Path | None = None,
         confirm_download_threshold_gb: float = 10.0,
+        split_name: str = "default",
     ) -> None:
+        self.split_name = split_name
         super().__init__(
             repo_id=repo_id,
             repo_type="dataset",
@@ -82,6 +84,8 @@ class PhysicalAIAVDatasetInterface(hf_interface.HfRepoInterface):
         self.features = Features(features_df)
 
         self.clip_index = pd.read_parquet(self.download_file("clip_index.parquet"))
+        if self.split_name != "default" or self._has_file("splits/default.parquet"):
+            self.clip_index["split"] = self._load_split_labels(self.split_name)
         if (
             self.is_offline_mode
             and not self.is_file_cached("metadata/feature_presence.parquet")
@@ -115,6 +119,24 @@ class PhysicalAIAVDatasetInterface(hf_interface.HfRepoInterface):
             .groupby("chunk")
             .any()
         )
+
+    def _has_file(self, filename: str) -> bool:
+        """Returns whether `filename` is cached locally or, when online, exists in the repository."""
+        return self.is_file_cached(filename) or (
+            not self.is_offline_mode
+            and self.api.file_exists(filename=filename, **self.repo_snapshot_info)
+        )
+
+    def _load_split_labels(self, split_name: str) -> pd.Series:
+        """Returns the `split` label of every clip in `clip_index` from `splits/<split_name>.parquet`."""
+        labels = pd.read_parquet(self.download_file(f"splits/{split_name}.parquet"))["split"]
+        unknown = labels.index.difference(self.clip_index.index)
+        if len(unknown):
+            raise ValueError(
+                f"splits/{split_name}.parquet labels {len(unknown)} clips absent from "
+                f"clip_index.parquet, e.g. {unknown[:3].tolist()}."
+            )
+        return labels.reindex(self.clip_index.index)
 
     def download_metadata(self) -> None:
         """Downloads dataset metadata, e.g., for the purpose of clip/chunk selection."""
