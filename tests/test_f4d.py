@@ -53,7 +53,7 @@ def remote_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Mock:
     ]
     api = Mock()
     api.list_repo_tree.return_value = [SimpleNamespace(path=path) for path in label_files]
-    api.file_exists.return_value = True
+    api.file_exists.side_effect = lambda filename, **kwargs: (tmp_path / filename).exists()
     api.get_paths_info.return_value = [SimpleNamespace(size=1)]
     api.hf_hub_download.side_effect = lambda filename, **kwargs: str(tmp_path / filename)
     monkeypatch.setattr(huggingface_hub, "HfApi", Mock(return_value=api))
