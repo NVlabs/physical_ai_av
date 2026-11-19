@@ -108,11 +108,12 @@ class PinholeCameraModel(CameraModel):
         )
 
     def ray2pixel(self, ray: np.ndarray) -> np.ndarray:
-        ray = ray / np.linalg.norm(ray, ord=2, axis=-1, keepdims=True)
-        return np.einsum("ij,...j->...i", self.camera_matrix, ray)[..., :2]
+        pixel = np.einsum("ij,...j->...i", self.camera_matrix, ray)
+        return pixel[..., :2] / pixel[..., 2:]
 
     def pixel2ray(self, pixel: np.ndarray) -> np.ndarray:
-        ray = np.einsum("ij,...i->...j", np.linalg.inv(self.camera_matrix), pixel)
+        pixel = np.concatenate([pixel, np.ones_like(pixel[..., :1])], axis=-1)
+        ray = np.einsum("ij,...j->...i", np.linalg.inv(self.camera_matrix), pixel)
         return ray / np.linalg.norm(ray, ord=2, axis=-1, keepdims=True)
 
 
